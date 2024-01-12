@@ -35,7 +35,7 @@ def extract_tables():
         for guia, saca, peso in zip(guias_stack, sacas_stack, peso_stack):
             guia_match = re.search(r'[A-Za-z]\d{5}-?\d{2}', guia)
             guia_formatted = guia_match.group() if guia_match else "N/A"
-            text.insert(tk.END, "Guia: {}, Sacas: {}, Peso: {}\n".format(guia_formatted, saca, peso))
+            text.insert(tk.END, "Lote: {}, Sacas: {}, Peso: {}\n".format(guia_formatted, saca, peso))
 
 
 # Criar a janela principal

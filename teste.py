@@ -1,58 +1,32 @@
 import tkinter as tk
-from tkinter import filedialog
-import camelot
+from tkinter import ttk, filedialog
 import tabula
 import re
+import sqlite3
 
-# Pilhas globais para armazenar os valores da mercon
-pilha_lote_mercon = []
-pilha_sacas_mercon = []
-pilha_peso_mercon = []
+def create_table_if_not_exists():
+    # Conectar ao banco de dados SQLite
+    conn = sqlite3.connect("dados_extracao.db")
+    cursor = conn.cursor()
 
-# Pilhas globais para armazenar os valores do procafe
-pilha_lote_procafe = []
-pilha_sacas_procafe = []
-pilha_peso_procafe = []
+    # Criar tabela se não existir
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS extracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identificador TEXT,
+            guia TEXT,
+            saca INTEGER,
+            peso INTEGER
+        )
+    ''')
 
-def extrair_dados_mercon():
-    global pilha_lote_mercon, pilha_sacas_mercon, pilha_peso_mercon
+    # Commit e fechar a conexão
+    conn.commit()
+    conn.close()
 
+def extract_tables(identificador):
     # Limpar o texto na área de texto
-    text_label.delete(1.0, tk.END)
-
-    # Obter o caminho do arquivo PDF
-    file_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
-
-    if file_path:
-        # Extrair tabelas do arquivo PDF usando Camelot
-        tables = camelot.read_pdf(file_path, flavor='stream', pages='all')
-
-        # Limpar as pilhas antes de uma nova extração
-        pilha_lote_mercon = []
-        pilha_sacas_mercon = []
-        pilha_peso_mercon = []
-
-        # Exibir tabelas na área de texto
-        for table in tables:
-            # Filtrar linhas usando a expressão regular
-            filtered_rows = table.df[table.df[0].str.match(r'[A-Za-z]\d{5}-?\d{2}', na=False)]
-
-            # Exibir apenas as colunas desejadas (Lotes, SACAS, PESO)
-            filtered_rows = filtered_rows[[0, 3, 4]]
-
-            # Armazenar valores nas pilhas globais
-            pilha_lote_mercon.extend(filtered_rows.iloc[:, 0])
-            pilha_sacas_mercon.extend(filtered_rows.iloc[:, 1])
-            pilha_peso_mercon.extend(filtered_rows.iloc[:, 2])
-
-        # Chamar a outra função para processar os dados (por exemplo, exibir em outra janela)
-        processar_dados()
-
-def extrair_dados_procafe():
-    global pilha_lote_procafe, pilha_sacas_procafe, pilha_peso_procafe
-
-    # Limpar o texto na área de texto
-    text_label.delete(1.0, tk.END)
+    text.delete(1.0, tk.END)
 
     # Obter o caminho do arquivo PDF
     file_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
@@ -61,61 +35,76 @@ def extrair_dados_procafe():
         # Extrair tabelas do arquivo PDF
         tables = tabula.read_pdf(file_path, pages='all', multiple_tables=True)
 
-        # Limpar as pilhas antes de uma nova extração
-        pilha_lote_procafe = []
-        pilha_sacas_procafe = []
-        pilha_peso_procafe = []
+        # Inicializar pilhas para armazenar dados
+        guias_stack = []
+        sacas_stack = []
+        peso_stack = []
 
         # Exibir apenas as linhas desejadas da Tabela 2
-        for i, table in enumerate(tables, 1):
-            if i == 2:  # Se for a Tabela 2
-                # Filtrar linhas que correspondem ao padrão desejado na coluna 1
-                filtered_rows = table[table.iloc[:, 0].astype(str).str.contains(r'[A-Za-z]\d{5}-?\d{2}', na=False)]
+    for i, table in enumerate(tables, 1):
+        if i == 2:  # Se for a Tabela 2
+            # Converter a coluna para o tipo de dados string antes de aplicar contains
+            table.iloc[:, 0] = table.iloc[:, 0].astype(str)
+
+            # Filtrar linhas que correspondem ao padrão desejado na coluna 1
+            filtered_rows = table[table.iloc[:, 0].str.contains(r'[A-Za-z]\d{5}-?\d{2}', na=False)]
+
+            # Restaurar o tipo de dados original da coluna
+            table.iloc[:, 0] = table.iloc[:, 0].astype(object)
+
+            # Armazenar dados nas pilhas
+            guias_stack.extend(filtered_rows.iloc[:, 0])
+            sacas_stack.extend(filtered_rows.iloc[:, 6])
+            peso_stack.extend(filtered_rows.iloc[:, 7])
 
 
+        # Conectar ao banco de dados SQLite
+        conn = sqlite3.connect("dados_extracao.db")
+        cursor = conn.cursor()
 
-                # Armazenar dados nas pilhas globais
-                pilha_lote_procafe.extend(filtered_rows.iloc[:, 0])
-                pilha_sacas_procafe.extend(filtered_rows.iloc[:, 6])
-                pilha_peso_procafe.extend(filtered_rows.iloc[:, 7])
+        # Inserir dados na tabela
+        for guia, saca, peso in zip(guias_stack, sacas_stack, peso_stack):
+            guia_match = re.search(r'[A-Za-z]\d{5}-?\d{2}', guia)
+            guia_formatted = guia_match.group() if guia_match else "N/A"
 
-        # Chamar a outra função para processar os dados (por exemplo, exibir em outra janela)
-        processar_dados()
+            # Inserir dados na tabela
+            cursor.execute("INSERT INTO extracoes (identificador, guia, saca, peso) VALUES (?, ?, ?, ?)",
+                           (identificador, guia_formatted, saca, peso))
 
-def processar_dados():
-    # Função para processar os dados armazenados nas pilhas globais
-    global pilha_lote_mercon, pilha_sacas_mercon, pilha_peso_mercon
-    global pilha_lote_procafe, pilha_sacas_procafe, pilha_peso_procafe
+            # Exibir na área de texto
+            text.insert(tk.END, "Lote: {}, Sacas: {}, Peso: {}\n".format(guia_formatted, saca, peso))
 
-    # Comparar os lotes e sacas dos dois conjuntos de dados
-    for guia, saca_mercon, peso_mercon in zip(pilha_lote_mercon, pilha_sacas_mercon, pilha_peso_mercon):
-        if guia in pilha_lote_procafe:
-            index = pilha_lote_procafe.index(guia)
-            saca_procafe = pilha_sacas_procafe[index]
-            peso_procafe = pilha_peso_procafe[index]
+        # Commit e fechar a conexão
+        conn.commit()
+        conn.close()
 
-            if saca_mercon == saca_procafe:
-                text_label.insert(tk.END, f"Guia {guia} corresponde e tem o mesmo número de sacas {saca_mercon} e peso {peso_mercon} em ambos os conjuntos de dados.\n", "correspondente")
-            else:
-                text_label.insert(tk.END, f"Guia {guia} corresponde, mas tem números diferentes de sacas {saca_mercon} e {saca_procafe} e pesos {peso_mercon} e {peso_procafe} em ambos os conjuntos de dados.\n", "diferente")
-        else:
-            text_label.insert(tk.END, f"Guia {guia} não foi encontrado no segundo conjunto de dados.\n", "nao_encontrado")
+def on_identificador_entry_change(*args):
+    global identificador_entry_text
+    identificador_entry_text = identificador_entry_var.get()
 
-    # Verificar se há guias no segundo conjunto de dados que não estão no primeiro conjunto de dados
-    for guia in pilha_lote_procafe:
-        if guia not in pilha_lote_mercon:
-            text_label.insert(tk.END, f"Guia {guia} foi encontrado apenas no segundo conjunto de dados.\n", "apenas_no_segundo")
-
-
-# Exemplo de uso
+# Criar a janela principal
 root = tk.Tk()
-text_label = tk.Text(root)
-text_label.pack()
+root.title("Extrair Tabelas de PDF")
 
-button_mercon = tk.Button(root, text="Escolher Arquivo Mercon", command=extrair_dados_mercon)
-button_mercon.pack()
+# Criar tabela se não existir
+create_table_if_not_exists()
 
-button_procafe = tk.Button(root, text="Escolher Arquivo Procafe", command=extrair_dados_procafe)
-button_procafe.pack()
+# Campo de entrada para identificador
+identificador_label = ttk.Label(root, text="Identificador:")
+identificador_label.pack(pady=5)
 
+identificador_entry_var = tk.StringVar()
+identificador_entry = ttk.Entry(root, textvariable=identificador_entry_var)
+identificador_entry.pack(pady=5)
+identificador_entry_var.trace_add("write", on_identificador_entry_change)
+
+# Botão para selecionar arquivo PDF
+browse_button = ttk.Button(root, text="Selecionar Arquivo PDF", command=lambda: extract_tables(identificador_entry_var.get()))
+browse_button.pack(pady=10)
+
+# Área de texto para exibir as tabelas
+text = tk.Text(root, wrap="none", height=40, width=100)
+text.pack(padx=10, pady=10)
+
+# Iniciar o loop principal da interface gráfica
 root.mainloop()
